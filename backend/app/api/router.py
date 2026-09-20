@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models.models import Building, CallTicket, DispatchLog, ElevatorCar
 from app.schemas.schemas import (
     BuildingOut,
+    BuildingWeightsUpdate,
     CallCreate,
     CallOut,
     CarOut,
@@ -13,7 +14,14 @@ from app.schemas.schemas import (
     DispatchRequest,
     LogOut,
 )
-from app.services.dispatch_engine import CallRequest, CarState, congestion_by_floor, pick_car
+from app.services.dispatch_engine import (
+    CallRequest,
+    CarState,
+    DispatchWeights,
+    congestion_by_floor,
+    pick_car,
+    weight_summary,
+)
 
 api_router = APIRouter()
 
@@ -26,6 +34,21 @@ def health():
 @api_router.get("/buildings", response_model=list[BuildingOut])
 def buildings(db: Session = Depends(get_db)):
     return db.scalars(select(Building).order_by(Building.id)).all()
+
+
+@api_router.patch("/buildings/{building_id}", response_model=BuildingOut)
+def update_building_weights(
+    building_id: int, body: BuildingWeightsUpdate, db: Session = Depends(get_db)
+):
+    b = db.get(Building, building_id)
+    if not b:
+        raise HTTPException(404, "楼栋不存在")
+    b.same_dir_bonus = body.same_dir_bonus
+    b.idle_bonus = body.idle_bonus
+    b.distance_weight = body.distance_weight
+    db.commit()
+    db.refresh(b)
+    return b
 
 
 @api_router.get("/cars", response_model=list[CarOut])
@@ -73,9 +96,24 @@ def dispatch(body: DispatchRequest, db: Session = Depends(get_db)):
         CarState(c.id, c.floor, c.direction, c.load, c.capacity) for c in car_rows
     ]
     call = CallRequest(ticket.id, ticket.floor, ticket.direction, ticket.passengers)
-    best = pick_car(cars, call)
+    building = db.get(Building, ticket.building_id)
+    assert building
+    # The single weights object used both for scoring and for the replay
+    # summary, so the log always quotes the numbers that produced the score.
+    weights = DispatchWeights(
+        same_dir_bonus=building.same_dir_bonus,
+        idle_bonus=building.idle_bonus,
+        distance_weight=building.distance_weight,
+    )
+    best = pick_car(cars, call, weights)
     if best is None:
-        db.add(DispatchLog(call_id=ticket.id, car_id=None, detail="全部轿厢满员，拒绝派工"))
+        db.add(
+            DispatchLog(
+                call_id=ticket.id,
+                car_id=None,
+                detail=f"全部轿厢满员，拒绝派工（{weight_summary(weights)}）",
+            )
+        )
         ticket.status = "rejected"
         db.commit()
         db.refresh(ticket)
@@ -92,7 +130,10 @@ def dispatch(body: DispatchRequest, db: Session = Depends(get_db)):
         DispatchLog(
             call_id=ticket.id,
             car_id=car.id,
-            detail=f"派予 {car.label}，评分 {best.score:.1f}（同向/距离综合）",
+            detail=(
+                f"派予 {car.label}，评分 {best.score:.1f}（同向/距离综合；"
+                f"{weight_summary(weights)}）"
+            ),
         )
     )
     db.commit()

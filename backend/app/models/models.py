@@ -1,9 +1,14 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.services.dispatch_engine import (
+    DISTANCE_WEIGHT,
+    IDLE_BONUS,
+    SAME_DIR_BONUS,
+)
 
 
 class Building(Base):
@@ -11,6 +16,17 @@ class Building(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(80), unique=True)
     floors: Mapped[int] = mapped_column(Integer)
+    # Per-building dispatch weights; server defaults equal the production
+    # constants, so existing rows and fresh seeds score as before.
+    same_dir_bonus: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default=str(SAME_DIR_BONUS)
+    )
+    idle_bonus: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default=str(IDLE_BONUS)
+    )
+    distance_weight: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default=str(DISTANCE_WEIGHT)
+    )
     cars: Mapped[list["ElevatorCar"]] = relationship(back_populates="building")
 
 
