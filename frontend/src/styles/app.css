@@ -253,3 +253,9 @@ button {
 .floor-slot.has-car { background: var(--car); color: white; border-color: #5eb3d8; font-weight: 700; }
 .floor-slot.has-call { box-shadow: inset 0 0 0 2px var(--call); }
 .congestion-bar { height: 14px; background: var(--call); border-radius: 4px; }
+
+/* Building weight settings */
+.weight-input { width: 84px; padding: .35rem .5rem; }
+.weight-saved { margin-left: .5rem; font-size: .82rem; }
+.weight-cell { color: var(--shaft-amber); white-space: nowrap; font-size: .82rem; }
+.settings-hint { margin-top: 1rem; color: var(--shaft-muted); font-size: .82rem; }

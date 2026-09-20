@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models.models import Building, CallTicket, DispatchLog, ElevatorCar
 from app.schemas.schemas import (
     BuildingOut,
+    BuildingWeightsUpdate,
     CallCreate,
     CallOut,
     CarOut,
@@ -13,7 +14,13 @@ from app.schemas.schemas import (
     DispatchRequest,
     LogOut,
 )
-from app.services.dispatch_engine import CallRequest, CarState, congestion_by_floor, pick_car
+from app.services.dispatch_engine import (
+    CallRequest,
+    CarState,
+    DispatchWeights,
+    congestion_by_floor,
+    pick_car,
+)
 
 api_router = APIRouter()
 
@@ -26,6 +33,21 @@ def health():
 @api_router.get("/buildings", response_model=list[BuildingOut])
 def buildings(db: Session = Depends(get_db)):
     return db.scalars(select(Building).order_by(Building.id)).all()
+
+
+@api_router.put("/buildings/{building_id}/weights", response_model=BuildingOut)
+def update_building_weights(
+    building_id: int, body: BuildingWeightsUpdate, db: Session = Depends(get_db)
+):
+    b = db.get(Building, building_id)
+    if not b:
+        raise HTTPException(404, "楼栋不存在")
+    b.same_dir_bonus = body.same_dir_bonus
+    b.idle_bonus = body.idle_bonus
+    b.distance_weight = body.distance_weight
+    db.commit()
+    db.refresh(b)
+    return b
 
 
 @api_router.get("/cars", response_model=list[CarOut])
@@ -66,6 +88,14 @@ def dispatch(body: DispatchRequest, db: Session = Depends(get_db)):
         raise HTTPException(404, "呼梯不存在")
     if ticket.status != "waiting":
         raise HTTPException(400, "呼梯已处理")
+    b = db.get(Building, ticket.building_id)
+    assert b
+    # 评分使用该楼栋保存的权重；缺省列值即现网常数
+    weights = DispatchWeights(
+        same_dir_bonus=b.same_dir_bonus,
+        idle_bonus=b.idle_bonus,
+        distance_weight=b.distance_weight,
+    )
     car_rows = db.scalars(
         select(ElevatorCar).where(ElevatorCar.building_id == ticket.building_id)
     ).all()
@@ -73,9 +103,18 @@ def dispatch(body: DispatchRequest, db: Session = Depends(get_db)):
         CarState(c.id, c.floor, c.direction, c.load, c.capacity) for c in car_rows
     ]
     call = CallRequest(ticket.id, ticket.floor, ticket.direction, ticket.passengers)
-    best = pick_car(cars, call)
+    best = pick_car(cars, call, weights)
     if best is None:
-        db.add(DispatchLog(call_id=ticket.id, car_id=None, detail="全部轿厢满员，拒绝派工"))
+        db.add(
+            DispatchLog(
+                call_id=ticket.id,
+                car_id=None,
+                detail="全部轿厢满员，拒绝派工",
+                same_dir_bonus=weights.same_dir_bonus,
+                idle_bonus=weights.idle_bonus,
+                distance_weight=weights.distance_weight,
+            )
+        )
         ticket.status = "rejected"
         db.commit()
         db.refresh(ticket)
@@ -93,6 +132,9 @@ def dispatch(body: DispatchRequest, db: Session = Depends(get_db)):
             call_id=ticket.id,
             car_id=car.id,
             detail=f"派予 {car.label}，评分 {best.score:.1f}（同向/距离综合）",
+            same_dir_bonus=weights.same_dir_bonus,
+            idle_bonus=weights.idle_bonus,
+            distance_weight=weights.distance_weight,
         )
     )
     db.commit()

@@ -6,7 +6,16 @@ class BuildingOut(BaseModel):
     id: int
     name: str
     floors: int
+    same_dir_bonus: float
+    idle_bonus: float
+    distance_weight: float
     model_config = {"from_attributes": True}
+
+
+class BuildingWeightsUpdate(BaseModel):
+    same_dir_bonus: float = Field(ge=0, le=1000)
+    idle_bonus: float = Field(ge=0, le=1000)
+    distance_weight: float = Field(ge=0, le=1000)
 
 
 class CarOut(BaseModel):
@@ -49,6 +58,10 @@ class LogOut(BaseModel):
     call_id: int
     car_id: int | None
     detail: str
+    same_dir_bonus: float | None
+    idle_bonus: float | None
+    distance_weight: float | None
+    weight_summary: str = ""
     created_at: datetime
     model_config = {"from_attributes": True}
 
